@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Final, Optional
+from typing import Optional
 
 import colorama
 
@@ -24,7 +24,8 @@ from hunter import Hunter
 from pbar import DocProgressbar
 from report import Report
 
-APP_VERSION: Final[str] = '1.3'
+APP_NAME: str = 'PANhunt'
+APP_VERSION: str = '1.4'
 
 
 def hunt_pans(quiet: bool, configuration: PANHuntConfiguration) -> Report:
@@ -118,8 +119,13 @@ def check_file_hash(text_file: str) -> None:
 
 def main() -> None:
 
-    logging.basicConfig(filename=os.path.join(panutils.get_root_dir(), 'PANhunt.log'),
-                        encoding='utf-8',
+    # logging.basicConfig(filename=os.path.join(panutils.get_root_dir(), 'PANhunt.log'),
+    #                     encoding='utf-8',
+    #                     format='%(asctime)s:%(levelname)s:%(message)s',
+    #                     datefmt="%Y-%m-%dT%H:%M:%S%z",
+    #                     level=logging.INFO)
+
+    logging.basicConfig(filename=os.path.join(panutils.get_root_dir(), f'{APP_NAME}.log'),
                         format='%(asctime)s:%(levelname)s:%(message)s',
                         datefmt="%Y-%m-%dT%H:%M:%S%z",
                         level=logging.INFO)
@@ -137,17 +143,7 @@ def main() -> None:
     arg_parser.add_argument(
         '-f', dest='file_path', help='File path for single file scan')
     arg_parser.add_argument('-x', dest='exclude_dirs',
-                            help='directories to exclude from the search', default='C:\\Windows,C:\\Program Files,C:\\Program Files (x86),/mnt,/dev,/proc')
-    arg_parser.add_argument(
-        '-t', dest='text_files', help='text file extensions to search', default=',.doc,.xls,.ppt,.xml,.txt,.csv,.log,.rtf,.tmp,.bak,.rtf,.csv,.htm,.html,.js,.css,.md,.json')
-    arg_parser.add_argument(
-        '-z', dest='zip_files', help='zip file extensions to search', default='.docx,.xlsx,.pptx,.zip')
-    arg_parser.add_argument('-m', dest='mail_messages',
-                            help='email message file extensions to search', default='.msg,.eml')
-    arg_parser.add_argument(
-        '-a', dest='mail_archives', help='email archive file extensions to search', default='.pst,.mbox')
-    arg_parser.add_argument(
-        '-l', dest='other_files', help='other file extensions to list (NOT IMPLEMENTED)', default='.ost,.accdb,.mdb')
+                            help='directories to exclude from the search (use absolute paths)', default='C:\\Windows,C:\\Program Files,C:\\Program Files (x86),/mnt,/dev,/proc')
     arg_parser.add_argument(
         '-o', dest='report_dir', help='Report file directory for TXT formatted PAN report', default='./')
     arg_parser.add_argument(
@@ -160,6 +156,8 @@ def main() -> None:
         '-X', dest='exclude_pan', help='PAN to exclude from search')
     arg_parser.add_argument('-q', dest='quiet', action='store_true',
                             default=False, help='No terminal output')
+    arg_parser.add_argument('-v', dest='verbose', action='store_true',
+                            default=False, help='Verbose logging')
     arg_parser.add_argument('-c', dest='check_file_hash',
                             help=argparse.SUPPRESS)  # hidden argument
 
@@ -173,16 +171,12 @@ def main() -> None:
     file_path = str(args.file_path)
     report_dir = str(args.report_dir)
     excluded_directories_string = str(args.exclude_dirs)
-    text_extensions_string = str(args.text_files)
-    zip_extensions_string = str(args.zip_files)
-    mail_message_extensions_string = str(args.mail_messages)
-    mail_archive_extensions_string = str(args.mail_archives)
-    other_extensions_string = str(args.other_files)
     mask_pans: bool = not args.unmask
     excluded_pans_string = str(args.exclude_pan)
     json_dir: Optional[str] = args.json_dir
     config_file: Optional[str] = args.config
     quiet: bool = args.quiet
+    verbose: bool = args.verbose
 
     # Initiated with default values
     config: PANHuntConfiguration = PANHuntConfiguration()
@@ -199,12 +193,8 @@ def main() -> None:
                          json_dir=json_dir,
                          mask_pans=mask_pans,
                          excluded_directories_string=excluded_directories_string,
-                         text_extensions_string=text_extensions_string,
-                         zip_extensions_string=zip_extensions_string,
-                         mail_message_extensions_string=mail_message_extensions_string,
-                         mail_archive_extensions_string=mail_archive_extensions_string,
-                         other_extensions_string=other_extensions_string,
-                         excluded_pans_string=excluded_pans_string)
+                         excluded_pans_string=excluded_pans_string,
+                         verbose=verbose)
 
     report: Report = hunt_pans(quiet=quiet, configuration=config)
 

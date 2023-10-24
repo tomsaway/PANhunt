@@ -6,7 +6,7 @@ import re
 import struct
 import sys
 import unicodedata
-from typing import Any
+from typing import Any, Union
 
 import magic
 
@@ -20,23 +20,26 @@ def get_root_dir() -> str:
         return './'
 
 
-def get_mime_data_from_buffer(value_bytes: bytes) -> tuple[str, str]:
+def get_mime_data_from_buffer(value_bytes: bytes) -> tuple:  # tuple[str, str]:
     m = magic.Magic(mime=True, mime_encoding=True)
-    buffer:bytes
+    buffer: bytes
     if (len(value_bytes) < 2048):
         buffer = value_bytes
     else:
         buffer = value_bytes[:2048]
-    mime_data: list[str] = m.from_buffer(buffer).split(';')
+
+    # list[str]
+    mime_data: list = m.from_buffer(buffer).split(';')
     mime_type: str = mime_data[0].strip().lower()
     encoding: str = mime_data[1].replace(
         ' charset=', '').strip().lower()
     return mime_type, encoding
 
 
-def get_mime_data_from_file(path: str) -> tuple[str, str]:
+def get_mime_data_from_file(path: str) -> tuple:  # tuple[str, str]:
     m = magic.Magic(mime=True, mime_encoding=True)
-    mime_data: list[str] = m.from_file(filename=path).split(';')
+    # list[str]
+    mime_data: list = m.from_file(filename=path).split(';')
     mime_type: str = mime_data[0].strip().lower()
     encoding: str = mime_data[1].replace(
         ' charset=', '').strip().lower()
@@ -55,14 +58,14 @@ def to_zeropaddedhex(value: int, fixed_length: int) -> str:
     return f"{value:0{fixed_length}x}".upper()
 
 
-def decode_zip_filename(filename: str | bytes) -> Any:
+def decode_zip_filename(filename: Union[str, bytes]) -> Any:
 
     if isinstance(filename, str):
         return filename
     return filename.decode('cp437')
 
 
-def decode_zip_text(zip_text: str | bytes) -> str:
+def decode_zip_text(zip_text: Union[str, bytes]) -> str:
 
     if isinstance(zip_text, bytes):
         return zip_text.decode('cp437')
@@ -77,7 +80,7 @@ def get_ext(file_name: str) -> str:
     return pathlib.Path(file_name).suffix.lower()
 
 
-def get_exts(file_name: str) -> list[str]:
+def get_exts(file_name: str) -> list:  # list[str]:
 
     return [ext.lower() for ext in pathlib.Path(file_name).suffixes]
 
@@ -94,7 +97,10 @@ def size_friendly(size: int) -> str:
         return f'{"{:.2f}".format(round(size / 1024, 2))}KB'
     if size < 1024 * 1024 * 1024:
         return f'{"{:.2f}".format(round(size / (1024 * 1024), 2))}MB'
-    return f'{"{:.2f}".format(round(size / (1024 * 1024 * 1024), 2))}MB'
+    if size < 1024 * 1024 * 1024 * 1024:
+        return f'{"{:.2f}".format(round(size / (1024 * 1024 * 1024), 2))}GB'
+    else:
+        return f'{"{:.2f}".format(round(size / (1024 * 1024 * 1024 * 1024), 2))}TB'
 
 
 def unpack_integer(format: str, buffer: bytes) -> int:
@@ -115,7 +121,7 @@ def unpack_bytes(format: str, buffer: bytes) -> bytes:
     if re.compile(r'\d+s').match(format):
         return bytes(struct.unpack(format, buffer)[0])
     else:
-        raise ArgumentError(format, buffer)
+        raise ValueError(format, buffer)
 
 
 def as_binary(value: Any) -> bytes:
@@ -146,7 +152,7 @@ def as_datetime(value: Any) -> dt.datetime:
         f'Expected type "datetime" got "{type(value)}". \nValue: {value!r}')
 
 
-def get_text_hash(text: str | bytes) -> str:
+def get_text_hash(text: Union[str, bytes]) -> str:
     encoded_text: bytes
 
     if isinstance(text, str):

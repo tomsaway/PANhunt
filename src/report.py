@@ -1,4 +1,3 @@
-from genericpath import exists
 import json
 import logging
 import os
@@ -8,8 +7,10 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
+from genericpath import exists
+
 import panutils
-from enums import FileCategoryEnum
+from enums import ScanStatusEnum
 from PANFile import PANFile
 
 
@@ -21,8 +22,8 @@ class Report:
     searched: str
     excluded: str
     pans_found: int
-    matched_files: list[PANFile]
-    interesting_files: list[PANFile]
+    matched_files: list  # list[PANFile]
+    interesting_files: list  # list[PANFile]
 
     __command: str
     __timestamp: str
@@ -30,11 +31,12 @@ class Report:
 
     def __init__(self,
                  search_dir: str,
-                 excluded_dirs: list[str],
+                 excluded_dirs: list,
                  pans_found: int,
                  all_files: Sequence[PANFile],
                  start: datetime,
                  end: datetime) -> None:
+        '''excluded_dirs: list[str]'''
         self.total_files = len(all_files)
         self.start = start
         self.end = end
@@ -47,7 +49,7 @@ class Report:
         self.matched_files = sorted(
             [pan_file for pan_file in all_files if pan_file.matches], key=lambda x: x.filename)
         self.interesting_files = sorted([
-            pan_file for pan_file in all_files if pan_file.file_category == FileCategoryEnum.Other], key=lambda x: x.path)
+            pan_file for pan_file in all_files if pan_file.file_category == ScanStatusEnum.NotScanned], key=lambda x: x.path)
 
     def create_text_report(self, path: str) -> None:
 
@@ -73,7 +75,7 @@ class Report:
             pan_report += pan_list.rstrip(pan_sep) + '\n\n'
 
         if len(self.interesting_files) != 0:
-            pan_report += 'Interesting Files to check separately:\n'
+            pan_report += 'Interesting Files to check separately, proably permission issue:\n'
         for pan_file in sorted(self.interesting_files, key=lambda x: x.filename):
             pan_report += f'{pan_file.path} ({panutils.size_friendly(pan_file.size)} {pan_file.modified.strftime("%d/%m/%Y")})\n'
 
@@ -106,9 +108,12 @@ class Report:
         report['total_files'] = self.total_files
         report['pans_found'] = self.pans_found
 
-        matched_items: dict[str, list[str]] = {}
+        # dict[str, list[str]]
+        matched_items: dict = {}
         for pan_file in self.matched_files:
-            items: list[str] = []
+
+            # list[str]
+            items: list = []
             for pan in pan_file.matches:
                 item: str = ''
                 if pan.filename != '':
