@@ -13,7 +13,7 @@ import os
 import struct
 from datetime import datetime, timedelta
 from io import BufferedReader
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import panutils
 from enums import PropIdEnum, PTypeEnum
@@ -22,9 +22,8 @@ from exceptions import PANHuntException
 _FilePathOrFileObject = Union[BufferedReader, int, str, bytes, os.PathLike[
     str], os.PathLike[bytes]]
 
-_ValueType = Optional[Union[int, float, datetime, bool, str,
-                            bytes, list]]
-# Optional[Union[int, float, datetime, bool, str, bytes, list[int], list[float], list[datetime], list[bytes], list[str]]]
+_ValueType = Optional[Union[int, float, datetime, bool, str, bytes,
+                            list[int], list[float], list[datetime], list[bytes], list[str]]]
 
 ###################################################################################################################################
 #  __  __ ____         ____ _____ ____
@@ -44,7 +43,7 @@ class FAT:
     FREESECT = 0xFFFFFFFF
 
     mscfb: 'MSCFB'
-    entries: list  # list[int]
+    entries: list[int]
 
     def __init__(self, mscfb: 'MSCFB') -> None:
 
@@ -65,13 +64,10 @@ class FAT:
         while sector != FAT.ENDOFCHAIN:
             stream_bytes += self.mscfb.get_sector_bytes(sector)
             sector = self.entries[sector]
-        # if size != 0:
         if size > len(stream_bytes) or size < len(stream_bytes) - self.mscfb.SectorSize:
             raise PANHuntException(
                 'FAT stream size does not match number of sectors')
         return stream_bytes[:size]
-        # else:
-        #    return bytes
 
     def __str__(self) -> str:
 
@@ -82,7 +78,7 @@ class MiniFAT:
 
     SECTORSIZE: int = 64
 
-    entries: list  # list[int]
+    entries: list[int]
     mscfb: 'MSCFB'
     mini_stream_bytes: bytes
 
@@ -119,14 +115,13 @@ class MiniFAT:
 
     def __str__(self) -> str:
 
-        # type: ignore
         return ', '.join([f"{hex(sector)}:{hex(entry)}" for sector, entry in zip(list(range(len(self.entries))), self.entries)])
 
 
 class Directory:
 
     mscfb: 'MSCFB'
-    entries: list  # list['DirectoryEntry']
+    entries: list['DirectoryEntry']
 
     def __init__(self, mscfb: 'MSCFB') -> None:
 
@@ -135,10 +130,9 @@ class Directory:
             self.mscfb.FirstDirectorySectorLocation)
         self.set_entry_children(self.entries[0])  # recursive
 
-    # list['DirectoryEntry']:
-    def get_all_directory_entries(self, start_sector: int) -> list:
+    def get_all_directory_entries(self, start_sector: int) -> list['DirectoryEntry']:
 
-        entries: list = []  # list[DirectoryEntry]
+        entries: list[DirectoryEntry] = []
         sector: int = start_sector
         while sector != FAT.ENDOFCHAIN:
             entries.extend(self.get_directory_sector(sector))
@@ -148,7 +142,7 @@ class Directory:
     def set_entry_children(self, dir_entry: 'DirectoryEntry') -> None:
 
         dir_entry.children = {}
-        child_ids_queue: list = []  # list[int]
+        child_ids_queue: list[int] = []
         if dir_entry.ChildID != DirectoryEntry.NOSTREAM:
             child_ids_queue.append(dir_entry.ChildID)
             while child_ids_queue:
@@ -165,10 +159,9 @@ class Directory:
                 if child_entry.ChildID != DirectoryEntry.NOSTREAM:
                     self.set_entry_children(child_entry)
 
-    # list['DirectoryEntry']
-    def get_directory_sector(self, sector: int) -> list:
+    def get_directory_sector(self, sector: int) -> list['DirectoryEntry']:
 
-        entries: list = []  # list['DirectoryEntry']
+        entries: list['DirectoryEntry'] = []
         sector_bytes: bytes = self.mscfb.get_sector_bytes(sector)
         sector_directory_entry_count: int = int(self.mscfb.SectorSize / 128)
         for i in range(sector_directory_entry_count):
@@ -203,21 +196,21 @@ class DirectoryEntry:
     StreamSize: int
     StartingSectorLocation: int
     stream_data: bytes
-    children: dict  # dict[str, 'DirectoryEntry']
+    children: dict[str, 'DirectoryEntry']
 
     def __init__(self, mscfb: 'MSCFB', directory_bytes: bytes) -> None:
 
         raw_size: int = len(directory_bytes)
         if raw_size != DirectoryEntry.ENTRY_SIZE:
             # raise MSGException('Directory Entry not 128 bytes')
-            print('Directory Entry not 128 bytes')
+            # print('Directory Entry not 128 bytes')
             return
 
         self.mscfb = mscfb
         nameLength: int = panutils.unpack_integer('H', directory_bytes[64:66])
         if nameLength > 64:
             # raise MSGException('Directory Entry name cannot be longer than 64')
-            print('Directory Entry name cannot be longer than 64')
+            # print('Directory Entry name cannot be longer than 64')
             return
         self.Name: str = directory_bytes[:nameLength -
                                          2].decode('utf-16-le')
@@ -264,8 +257,7 @@ class DirectoryEntry:
 
         line_pfx: str = '\t' * level
         s: str = ''
-        # list['DirectoryEntry']
-        sorted_entries: list = [
+        sorted_entries: list['DirectoryEntry'] = [
             i for i in self.children.values()]
         sorted_entries.sort(key=lambda x: x.Name)
         for child_entry in sorted_entries:
@@ -304,7 +296,7 @@ class MSCFB:
     MiniFATSectors: int
     FirstDIFATSectorLocation: int
     DIFATSectors: int
-    DIFAT: list  # list[int]
+    DIFAT: list[int]
     signature: bytes
     CLSID: bytes
 
@@ -389,7 +381,7 @@ class PropertyStream:
     EMBEDDED_MSG_HEADER_SIZE: int = 24
 
     msmsg: 'MSMSG'
-    properties: dict  # dict[int, 'PropertyEntry']
+    properties: dict[int, 'PropertyEntry']
     NextRecipientID: int
     NextAttachmentID: int
     RecipientCount: int
@@ -471,12 +463,12 @@ class PropertyEntry:
                 else:  # PtypMultipleString8 or PtypMultipleString
                     len_item_size = 4
 
-                value_lengths: list = []  # list[int]
+                value_lengths: list[int] = []
                 for i in range(int(len(property_bytes) / len_item_size)):
                     value_lengths.append(panutils.unpack_integer(
                         'I', property_bytes[i * len_item_size:i * len_item_size + 4]))
 
-                property_byte_list: list = []  # list[bytes]
+                property_byte_list: list[bytes] = []
                 for i in range(len(value_lengths)):
                     index_stream_name: str = f"{stream_name}-{panutils.to_zeropaddedhex(i, 8)}"
                     property_byte_list.append(
@@ -506,47 +498,47 @@ class MsgPTypeWrapper:
 
         self.ptype, self.byte_count, self.is_variable, self.is_multi = ptype, byte_count, is_variable, is_multi
 
-    def get_value(self, value_bytes: bytes) -> _ValueType:
-        """value_bytes is normally a string of bytes, but if multi and variable, bytes is a list of bytes"""
+    def get_value(self, payload: bytes) -> _ValueType:
+        """payload is normally a string of bytes, but if multi and variable, bytes is a list of bytes"""
 
         if self.ptype == PTypeEnum.PtypInteger16:
-            return panutils.unpack_integer('h', value_bytes)
+            return panutils.unpack_integer('h', payload)
         if self.ptype == PTypeEnum.PtypInteger32:
-            return panutils.unpack_integer('i', value_bytes)
+            return panutils.unpack_integer('i', payload)
         if self.ptype == PTypeEnum.PtypFloating32:
-            return panutils.unpack_float('f', value_bytes)
+            return panutils.unpack_float('f', payload)
         if self.ptype == PTypeEnum.PtypFloating64:
-            return panutils.unpack_float('d', value_bytes)
+            return panutils.unpack_float('d', payload)
         if self.ptype == PTypeEnum.PtypCurrency:
             raise NotImplementedError('PtypCurrency')
         if self.ptype == PTypeEnum.PtypFloatingTime:
-            return self.get_floating_time(value_bytes)
+            return self.get_floating_time(payload)
         if self.ptype == PTypeEnum.PtypErrorCode:
-            return panutils.unpack_integer('I', value_bytes)
+            return panutils.unpack_integer('I', payload)
         if self.ptype == PTypeEnum.PtypBoolean:
-            return panutils.unpack_integer('B', value_bytes) != 0
+            return panutils.unpack_integer('B', payload) != 0
         if self.ptype == PTypeEnum.PtypInteger64:
-            return panutils.unpack_integer('q', value_bytes)
+            return panutils.unpack_integer('q', payload)
         if self.ptype == PTypeEnum.PtypString:
             # Preventing the error:
             # UnicodeDecodeError: 'utf16' codec can't decode bytes in position 0 - 1:
             # illegal UTF - 16 surrogate
             try:
-                return value_bytes.decode('utf-16-le')  # unicode
+                return payload.decode('utf-16-le')  # unicode
             except UnicodeDecodeError:
                 PANHuntException(
                     'String property not correctly utf-16-le encoded, ignoring errors')
                 # unicode
-                return value_bytes.decode('utf-16-le', errors='ignore')
+                return payload.decode('utf-16-le', errors='ignore')
         if self.ptype == PTypeEnum.PtypString8:
-            if value_bytes[-1:] == b'\x00':
-                return value_bytes[:-1]
+            if payload[-1:] == b'\x00':
+                return payload[:-1]
             else:
-                return value_bytes
+                return payload
         if self.ptype == PTypeEnum.PtypTime:
-            return self.get_time(value_bytes)
+            return self.get_time(payload)
         if self.ptype == PTypeEnum.PtypGuid:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypServerId:
             raise NotImplementedError('PtypServerId')
         if self.ptype == PTypeEnum.PtypRestriction:
@@ -554,59 +546,56 @@ class MsgPTypeWrapper:
         if self.ptype == PTypeEnum.PtypRuleAction:
             raise NotImplementedError('PtypRuleAction')
         if self.ptype == PTypeEnum.PtypBinary:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypMultipleInteger16:
-            return self.unpack_list_int(value_bytes, 16)
+            return self.unpack_list_int(payload, 16)
         if self.ptype == PTypeEnum.PtypMultipleInteger32:
-            return self.unpack_list_int(value_bytes, 32)
+            return self.unpack_list_int(payload, 32)
         if self.ptype == PTypeEnum.PtypMultipleFloating32:
-            return self.unpack_list_float(value_bytes, 32)
+            return self.unpack_list_float(payload, 32)
         if self.ptype == PTypeEnum.PtypMultipleFloating64:
-            return self.unpack_list_float(value_bytes, 64)
+            return self.unpack_list_float(payload, 64)
         if self.ptype == PTypeEnum.PtypMultipleCurrency:
             raise NotImplementedError('PtypMultipleCurrency')
         if self.ptype == PTypeEnum.PtypMultipleFloatingTime:
-            count: int = len(value_bytes) // 8
-            return [self.get_floating_time(value_bytes[i * 8:(i + 1) * 8]) for i in range(count)]
+            count: int = len(payload) // 8
+            return [self.get_floating_time(payload[i * 8:(i + 1) * 8]) for i in range(count)]
         if self.ptype == PTypeEnum.PtypMultipleInteger64:
-            self.unpack_list_int(value_bytes=value_bytes, bit_size=64)
+            self.unpack_list_int(payload=payload, bit_size=64)
         if self.ptype == PTypeEnum.PtypMultipleString:
-            return ''.join([item_bytes.to_bytes(2, 'little').decode('utf-16-le') for item_bytes in value_bytes])
+            return ''.join([item_bytes.to_bytes(2, 'little').decode('utf-16-le') for item_bytes in payload])
         if self.ptype == PTypeEnum.PtypMultipleString8:
-            return value_bytes  # list
+            return payload  # list
         if self.ptype == PTypeEnum.PtypMultipleTime:
-            count = len(value_bytes) // 8
-            return [self.get_time(value_bytes[i * 8:(i + 1) * 8]) for i in range(count)]
+            count = len(payload) // 8
+            return [self.get_time(payload[i * 8:(i + 1) * 8]) for i in range(count)]
         if self.ptype == PTypeEnum.PtypMultipleGuid:
-            count = len(value_bytes) // 16
-            return [value_bytes[i * 16:(i + 1) * 16] for i in range(count)]
+            count = len(payload) // 16
+            return [payload[i * 16:(i + 1) * 16] for i in range(count)]
         if self.ptype == PTypeEnum.PtypMultipleBinary:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypUnspecified:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypNull:
             return None
         if self.ptype == PTypeEnum.PtypObject:
-            return value_bytes
+            return payload
         raise PANHuntException(f"Invalid PTypeEnum for value {self.ptype}")
 
-    # list[int]
-    def unpack_list_int(self, value_bytes: bytes, bit_size: int) -> list:
-        '''bit_size: Literal[16, 32, 64] # Downgraded to python3.6 '''
-        format_dict: dict = {16: 'h', 32: 'i', 64: 'q'}  # dict[int, str]
+    def unpack_list_int(self, payload: bytes, bit_size: Literal[16, 32, 64]) -> list[int]:
+        format_dict: dict[int, str] = {
+            16: 'h', 32: 'i', 64: 'q'}
         buffer_size = (bit_size // 8)
-        count: int = len(value_bytes) // buffer_size
+        count: int = len(payload) // buffer_size
         return [panutils.unpack_integer(
-            format_dict[bit_size], value_bytes[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
+            format_dict[bit_size], payload[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
 
-    # list[float]
-    def unpack_list_float(self, value_bytes: bytes, bit_size: int) -> list:
-        '''bit_size: Literal[32, 64] # Downgraded to python3.6 '''
-        format_dict: dict = {32: 'f', 64: 'd'}  # dict[int, str]
+    def unpack_list_float(self, payload: bytes, bit_size: Literal[32, 64]) -> list[float]:
+        format_dict: dict[int, str] = {32: 'f', 64: 'd'}
         buffer_size = (bit_size // 8)
-        count: int = len(value_bytes) // buffer_size
+        count: int = len(payload) // buffer_size
         return [panutils.unpack_float(
-            format_dict[bit_size], value_bytes[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
+            format_dict[bit_size], payload[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
 
     def get_floating_time(self, time_bytes: bytes) -> datetime:
 
@@ -616,15 +605,13 @@ class MsgPTypeWrapper:
 
         return datetime(year=1601, month=1, day=1) + timedelta(microseconds=panutils.unpack_integer('q', time_bytes) / 10.0)
 
-    # tuple[int, int]:
-    def get_multi_value_offsets(self, value_bytes: bytes) -> tuple:
+    def get_multi_value_offsets(self, payload: bytes) -> tuple[int, list[int]]:
 
-        ul_count: int = panutils.unpack_integer('I', value_bytes[:4])
-        # list[int]
-        rgul_data_offsets: list = [panutils.unpack_integer(
-            'I', value_bytes[(i + 1) * 4:(i + 2) * 4]) for i in range(ul_count)]
+        ul_count: int = panutils.unpack_integer('I', payload[:4])
+        rgul_data_offsets: list[int] = [panutils.unpack_integer(
+            'I', payload[(i + 1) * 4:(i + 2) * 4]) for i in range(ul_count)]
 
-        rgul_data_offsets.append(len(value_bytes))
+        rgul_data_offsets.append(len(payload))
         return ul_count, rgul_data_offsets
 
 
@@ -713,9 +700,9 @@ class MSMSG:
     validMSG: bool
     root_dir_entry: DirectoryEntry
     prop_stream: PropertyStream
-    recipients: list  # list[Recipient]
-    attachments: list  # list[Attachment]
-    ptype_mapping: dict  # dict[PTypeEnum, MsgPTypeWrapper]
+    recipients: list[Recipient]
+    attachments: list[Attachment]
+    ptype_mapping: dict[PTypeEnum, MsgPTypeWrapper]
     Subject: str
     ClientSubmitTime: Optional[datetime]
     SentRepresentingName: str

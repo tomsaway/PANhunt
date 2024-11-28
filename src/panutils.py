@@ -1,12 +1,12 @@
 import datetime as dt
-import hashlib
 import os
 import pathlib
 import re
 import struct
 import sys
 import unicodedata
-from typing import Any, Union
+from gzip import FEXTRA, FNAME, GzipFile
+from typing import Any, Optional, Union
 
 import magic
 
@@ -20,26 +20,42 @@ def get_root_dir() -> str:
         return './'
 
 
-def get_mime_data_from_buffer(value_bytes: bytes) -> tuple:  # tuple[str, str]:
+def get_mimetype(path: Optional[str] = None, payload: Optional[bytes] = None) -> tuple[str, str, Optional[Exception]]:
+
+    try:
+        error: Optional[Exception] = None
+        if payload is not None:
+            mime_type, encoding = __get_mime_data_from_buffer(payload)
+        elif path is not None:
+            mime_type, encoding = __get_mime_data_from_file(path)
+        else:
+            mime_type, encoding = 'Unknown/Unknown', 'Unknown'
+    except Exception as ex:
+        mime_type = 'Unknown/Unknown'
+        encoding = 'Unknown'
+        error = ex
+    finally:
+        return mime_type, encoding, error
+
+
+def __get_mime_data_from_buffer(payload: bytes) -> tuple[str, str]:
     m = magic.Magic(mime=True, mime_encoding=True)
     buffer: bytes
-    if (len(value_bytes) < 2048):
-        buffer = value_bytes
+    if (len(payload) < 2048):
+        buffer = payload
     else:
-        buffer = value_bytes[:2048]
+        buffer = payload[:2048]
 
-    # list[str]
-    mime_data: list = m.from_buffer(buffer).split(';')
+    mime_data: list[str] = m.from_buffer(buffer).split(';')
     mime_type: str = mime_data[0].strip().lower()
     encoding: str = mime_data[1].replace(
         ' charset=', '').strip().lower()
     return mime_type, encoding
 
 
-def get_mime_data_from_file(path: str) -> tuple:  # tuple[str, str]:
+def __get_mime_data_from_file(path: str) -> tuple[str, str]:
     m = magic.Magic(mime=True, mime_encoding=True)
-    # list[str]
-    mime_data: list = m.from_file(filename=path).split(';')
+    mime_data: list[str] = m.from_file(filename=path).split(';')
     mime_type: str = mime_data[0].strip().lower()
     encoding: str = mime_data[1].replace(
         ' charset=', '').strip().lower()
@@ -62,6 +78,9 @@ def decode_zip_filename(filename: Union[str, bytes]) -> Any:
 
     if isinstance(filename, str):
         return filename
+
+    if isinstance(filename, memoryview):
+        return filename
     return filename.decode('cp437')
 
 
@@ -80,7 +99,7 @@ def get_ext(file_name: str) -> str:
     return pathlib.Path(file_name).suffix.lower()
 
 
-def get_exts(file_name: str) -> list:  # list[str]:
+def get_exts(file_name: str) -> list[str]:
 
     return [ext.lower() for ext in pathlib.Path(file_name).suffixes]
 
@@ -152,12 +171,38 @@ def as_datetime(value: Any) -> dt.datetime:
         f'Expected type "datetime" got "{type(value)}". \nValue: {value!r}')
 
 
-def get_text_hash(text: Union[str, bytes]) -> str:
-    encoded_text: bytes
+def memoryview_to_bytes(mem_view: memoryview) -> Optional[bytes]:
+    try:
+        # Convert memory view to bytes using bytes()
+        bytes_data = bytes(mem_view)
+        return bytes_data
+    except Exception:
+        return None
 
-    if isinstance(text, str):
-        encoded_text = text.encode('utf-8')
-    else:
-        encoded_text = text
 
-    return hashlib.sha512(encoded_text + 'PAN'.encode('utf-8')).hexdigest()
+def get_compressed_filename(gf: GzipFile) -> str:
+    gf.seek(0)
+    magic: bytes = gf.read(2)
+    method, flag = struct.unpack("<BB", gf.read(2))
+
+    if not flag & FNAME:
+        # Filename is not stored in the header, use the filename minus .gz
+        fname = getattr(gf, 'name', 'unknown')
+        if fname.endswith('.gz'):
+            fname = os.path.basename(fname)[:-3]
+        return fname
+
+    if flag & FEXTRA:
+        # Read & discard the extra field, if present
+        extra_len = struct.unpack("<H", gf.read(2))[0]
+        gf.read(extra_len)
+
+    # Read a null-terminated string containing the original filename
+    filename: list[str] = []
+    while True:
+        s: bytes = gf.read(1)
+        if not s or s == b'\000':
+            break
+        filename.append(s.decode())
+
+    return ''.join(filename)

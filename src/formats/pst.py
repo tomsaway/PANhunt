@@ -12,7 +12,6 @@ import itertools
 import logging
 import math
 import os
-import string
 import struct
 from datetime import datetime, timedelta
 from enum import Enum, Flag
@@ -23,10 +22,8 @@ import panutils
 from enums import PropIdEnum, PTypeEnum
 from exceptions import PANHuntException
 
-_ValueType = Optional[Union[int, float, datetime, bool, str,
-                            bytes, list]]
-
-# Optional[Union[int, float, datetime, bool, str, bytes, list[int], list[float], list[datetime], list[bytes], list[str]]]
+_ValueType = Optional[Union[int, float, datetime, bool, str, bytes,
+                            list[int], list[float], list[datetime], list[bytes], list[str]]]
 
 
 ##############################################################################################################################
@@ -87,12 +84,15 @@ class NID:
     is_hid: bool
     is_nid: bool
 
-    def __init__(self, bytes_or_nid: Union[str, bytes]) -> None:
+    def __init__(self, bytes_or_nid: Union[int, bytes]) -> None:
 
         if isinstance(bytes_or_nid, int):
             self.nid = bytes_or_nid
-        else:
+        elif isinstance(bytes_or_nid, bytes):
             self.nid = panutils.unpack_integer('I', bytes_or_nid)
+        else:
+            raise PANHuntException('Invalid NID type')
+
         self.nidType = self.nid & 0x1f
         self.nidIndex = self.nid & 0xffffffe0
         self.is_hid = False
@@ -107,12 +107,12 @@ class BID:
     bid: int
     is_internal: bool
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
-        if len(value_bytes) == 4:  # ansi
-            self.bid = panutils.unpack_integer('I', value_bytes)
+        if len(payload) == 4:  # ansi
+            self.bid = panutils.unpack_integer('I', payload)
         else:  # unicode (8)
-            self.bid = panutils.unpack_integer('Q', value_bytes)
+            self.bid = panutils.unpack_integer('Q', payload)
         if self.bid % 2 == 1:  # A
             self.bid -= 1
         self.is_internal = (self.bid & 2 == 2)  # B
@@ -129,13 +129,13 @@ class BREF:
     bid: BID
     ib: int
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
         bid: bytes
         ib: int
-        if len(value_bytes) == 8:  # ansi
-            bid, ib = struct.unpack('4sI', value_bytes)
+        if len(payload) == 8:  # ansi
+            bid, ib = struct.unpack('4sI', payload)
         else:  # unicode (16)
-            bid, ib = struct.unpack('8sQ', value_bytes)
+            bid, ib = struct.unpack('8sQ', payload)
         self.bid = BID(bid)
         self.ib = ib
 
@@ -163,12 +163,12 @@ class Page:
     cEntMax: int
     cbEnt: int
     cLevel: int
-    rgEntries: list  # list[Union['BTENTRY', 'NBTENTRY', 'BBTENTRY']]
+    rgEntries: list[Union['BTENTRY', 'NBTENTRY', 'BBTENTRY']]
 
-    def __init__(self, value_bytes: bytes, is_ansi: bool) -> None:
+    def __init__(self, payload: bytes, is_ansi: bool) -> None:
 
         # fixed 512 bytes
-        if len(value_bytes) != Page.PAGE_SIZE:
+        if len(payload) != Page.PAGE_SIZE:
             raise PANHuntException('Invalid Page size')
 
         ptype: int
@@ -179,11 +179,11 @@ class Page:
 
         if is_ansi:
             ptype, ptypeRepeat, wSig, bid, dwCRC = struct.unpack(
-                'BBHII', value_bytes[-12:])
+                'BBHII', payload[-12:])
 
         else:  # unicode
             ptype, ptypeRepeat, wSig, dwCRC, bid = struct.unpack(
-                'BBHIQ', value_bytes[-16:])
+                'BBHIQ', payload[-16:])
 
         self.ptype = ptype
         self.ptypeRepeat = ptypeRepeat
@@ -207,12 +207,12 @@ class Page:
 
             if is_ansi:
                 cEnt, cEntMax, cbEnt, cLevel = struct.unpack(
-                    'BBBB', value_bytes[-16:-12])
+                    'BBBB', payload[-16:-12])
                 # rgEntries 492 (cLevel>0) or 496 bytes (cLevel=0)
                 entry_size = 12
             else:  # unicode
                 cEnt, cEntMax, cbEnt, cLevel = struct.unpack(
-                    'BBBB', value_bytes[-24:-20])
+                    'BBBB', payload[-24:-20])
                 # rgEntries 488 bytes
                 entry_size = 24
 
@@ -234,7 +234,7 @@ class Page:
             # self.cbEnt is size of each entry which may be different to entry_size
             for i in range(self.cEnt):
                 self.rgEntries.append(entry_type(
-                    value_bytes[i * self.cbEnt:i * self.cbEnt + entry_size]))
+                    payload[i * self.cbEnt:i * self.cbEnt + entry_size]))
 
     def __repr__(self) -> str:
 
@@ -245,15 +245,15 @@ class BTENTRY:
     BREF: 'BREF'
     btkey: int
 
-    def __init__(self, value_bytes: bytes
+    def __init__(self, payload: bytes
                  ) -> None:
 
-        if len(value_bytes) == 12:  # ansi
-            self.btkey = panutils.unpack_integer('I', value_bytes[:4])
-            self.BREF = BREF(value_bytes[4:])
+        if len(payload) == 12:  # ansi
+            self.btkey = panutils.unpack_integer('I', payload[:4])
+            self.BREF = BREF(payload[4:])
         else:  # unicode 24
-            self.btkey = panutils.unpack_integer('Q', value_bytes[:8])
-            self.BREF = BREF(value_bytes[8:])
+            self.btkey = panutils.unpack_integer('Q', payload[:8])
+            self.BREF = BREF(payload[8:])
 
     def __repr__(self) -> str:
 
@@ -265,14 +265,14 @@ class BBTENTRY:
     cb: int
     cRef: int
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
-        if len(value_bytes) == 12:  # ansi
-            self.BREF = BREF(value_bytes[:8])
-            self.cb, self.cRef = struct.unpack('HH', value_bytes[8:12])
+        if len(payload) == 12:  # ansi
+            self.BREF = BREF(payload[:8])
+            self.cb, self.cRef = struct.unpack('HH', payload[8:12])
         else:  # unicode (24)
-            self.BREF = BREF(value_bytes[:16])
-            self.cb, self.cRef = struct.unpack('HH', value_bytes[16:20])
+            self.BREF = BREF(payload[:16])
+            self.cb, self.cRef = struct.unpack('HH', payload[16:20])
 
     def __repr__(self) -> str:
 
@@ -285,14 +285,14 @@ class NBTENTRY:
     bidSub: BID
     nidParent: NID
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
-        if len(value_bytes) == 16:  # ansi
+        if len(payload) == 16:  # ansi
             nid, bidData, bidSub, nidParent = struct.unpack(
-                '4s4s4s4s', value_bytes)
+                '4s4s4s4s', payload)
         else:  # unicode (32)
             nid, padding, bidData, bidSub, nidParent = struct.unpack(
-                '4s4s8s8s4s', value_bytes[:-4])
+                '4s4s8s8s4s', payload[:-4])
         self.nid = NID(nid)
         self.bidData = BID(bidData)
         self.bidSub = BID(bidSub)
@@ -308,14 +308,14 @@ class SLENTRY:
     bidData: BID
     bidSub: BID
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
-        if len(value_bytes) == 12:  # ansi
+        if len(payload) == 12:  # ansi
             nid, bidData, bidSub = struct.unpack(
-                '4s4s4s', value_bytes)
+                '4s4s4s', payload)
         else:  # unicode 24
             nid, padding, bidData, bidSub = struct.unpack(
-                '4s4s8s8s', value_bytes)
+                '4s4s8s8s', payload)
         self.nid = NID(nid)
         self.bidData = BID(bidData)
         self.bidSub = BID(bidSub)
@@ -330,14 +330,14 @@ class SIENTRY:
     nid: NID
     bid: BID
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
         nid: bytes
         bid: bytes
 
-        if len(value_bytes) == 8:  # ansi
-            nid, bid = struct.unpack('4s4s', value_bytes)
+        if len(payload) == 8:  # ansi
+            nid, bid = struct.unpack('4s4s', payload)
         else:  # unicode 16
-            nid, padding, bid = struct.unpack('4s4s8s', value_bytes)
+            nid, padding, bid = struct.unpack('4s4s8s', payload)
         self.nid = NID(nid)
         self.bid = BID(bid)
 
@@ -379,9 +379,9 @@ class Block:
     dwCRC: int
     data_block: bytes
     lcbTotal: int
-    rgbid: list  # list[BID]
+    rgbid: list[BID]
 
-    def __init__(self, value_bytes: bytes, offset: int, data_size: int, is_ansi: bool, bid_check, bCryptMethod: CryptMethodEnum) -> None:
+    def __init__(self, payload: bytes, offset: int, data_size: int, is_ansi: bool, bid_check, bCryptMethod: CryptMethodEnum) -> None:
 
         self.is_ansi = is_ansi
         self.offset = offset  # for debugging
@@ -393,7 +393,7 @@ class Block:
 
         if self.is_ansi:  # 12
             cb, wSig, bid, dwCRC = struct.unpack(
-                'HH4sI', value_bytes[-12:])
+                'HH4sI', payload[-12:])
             bid_size = 4
             slentry_size = 12
             sientry_size = 8
@@ -401,7 +401,7 @@ class Block:
             sl_si_entries_offset = 4
         else:  # unicode 16
             cb, wSig, dwCRC, bid = struct.unpack(
-                'HHI8s', value_bytes[-16:])
+                'HHI8s', payload[-16:])
             bid_size = 8
             slentry_size = 24
             sientry_size = 16
@@ -426,23 +426,23 @@ class Block:
             self.cLevel = 0
             if bCryptMethod == CryptMethodEnum.NDB_CRYPT_PERMUTE:  # NDB_CRYPT_PERMUTE
                 io = BytesIO(Block.decrypt_table)
-                self.data_block = value_bytes[:data_size].translate(
+                self.data_block = payload[:data_size].translate(
                     io.read())
             elif bCryptMethod == CryptMethodEnum.Unencoded:
-                self.data_block = value_bytes[:data_size]  # data block
+                self.data_block = payload[:data_size]  # data block
             else:
                 raise RuntimeError("Unsupported encryption method.")
 
         else:  # XBLOCK, XXBLOCK, SLBLOCK or SIBLOCK
 
             btype, cLevel, cEnt = struct.unpack(
-                'BBH', value_bytes[:4])
+                'BBH', payload[:4])
             self.btype = int(btype)
             self.cLevel = int(cLevel)
             self.cEnt = int(cEnt)
 
             if self.btype == 1:  # XBLOCK, XXBLOCK
-                self.lcbTotal = panutils.unpack_integer('I', value_bytes[4:8])
+                self.lcbTotal = panutils.unpack_integer('I', payload[4:8])
                 if self.cLevel == 1:  # XBLOCK
                     self.block_type = Block.btypeXBLOCK
                 elif self.cLevel == 2:  # XXBLOCK
@@ -453,22 +453,22 @@ class Block:
                 self.rgbid = []
                 for i in range(self.cEnt):
                     self.rgbid.append(
-                        BID(value_bytes[8 + i * bid_size:8 + (i + 1) * bid_size]))
+                        BID(payload[8 + i * bid_size:8 + (i + 1) * bid_size]))
 
             elif self.btype == 2:  # SLBLOCK, SIBLOCK
 
-                self.rgentries: list = []  # list[SIENTRY | SLENTRY]
+                self.rgentries: list[SIENTRY | SLENTRY] = []
 
                 if self.cLevel == 0:  # SLBLOCK
                     self.block_type = Block.btypeSLBLOCK
                     for i in range(self.cEnt):
                         self.rgentries.append(SLENTRY(
-                            value_bytes[sl_si_entries_offset + i * slentry_size:sl_si_entries_offset + (i + 1) * slentry_size]))
+                            payload[sl_si_entries_offset + i * slentry_size:sl_si_entries_offset + (i + 1) * slentry_size]))
                 elif self.cLevel == 1:  # SIBLOCK
                     self.block_type = Block.btypeSIBLOCK
                     for i in range(self.cEnt):
                         self.rgentries.append(SIENTRY(
-                            value_bytes[sl_si_entries_offset + i * sientry_size:sl_si_entries_offset + (i + 1) * sientry_size]))
+                            payload[sl_si_entries_offset + i * sientry_size:sl_si_entries_offset + (i + 1) * sientry_size]))
                 else:
                     raise PANHuntException(
                         'Invalid Block Level %s' % self.cLevel)
@@ -486,8 +486,8 @@ class NBD:
 
     fd: BufferedReader
     header: 'Header'
-    nbt_entries: dict  # dict[int, NBTENTRY]
-    bbt_entries: dict  # dict[int, BBTENTRY]
+    nbt_entries: dict[int, NBTENTRY]
+    bbt_entries: dict[int, BBTENTRY]
 
     def __init__(self, fd: BufferedReader, header: 'Header') -> None:
 
@@ -529,10 +529,10 @@ class NBD:
         self.fd.seek(offset)
         return Block(self.fd.read(block_size), offset, data_size, self.header.is_ansi, bid, self.header.bCryptMethod)
 
-    def fetch_all_block_data(self, bid: BID) -> list:  # list[bytes]
+    def fetch_all_block_data(self, bid: BID) -> list[bytes]:
         """returns list of block datas"""
 
-        data_list: list = []  # list[bytes]
+        data_list: list[bytes] = []
 
         block: Block = self.fetch_block(bid)
         if block.block_type == Block.btypeData:
@@ -556,10 +556,10 @@ class NBD:
                 'Invalid block type (not data/XBLOCK/XXBLOCK), got %s' % block.block_type)
         return data_list
 
-    def fetch_subnodes(self, bid: BID) -> dict:  # dict[int, SLENTRY]
+    def fetch_subnodes(self, bid: BID) -> dict[int, SLENTRY]:
         """ get dictionary of subnode SLENTRYs for subnode bid"""
 
-        subnodes: dict = {}  # dict[int, SLENTRY]
+        subnodes: dict[int, SLENTRY] = {}
         block: Block = self.fetch_block(bid)
         if block.block_type == Block.btypeSLBLOCK:
             for entry in block.rgentries:
@@ -578,12 +578,10 @@ class NBD:
                 'Invalid block type (not SLBLOCK/SIBLOCK), got %s' % block.block_type)
         return subnodes
 
-    # dict[int, NBTENTRY | BBTENTRY]:
-    def get_page_leaf_entries(self, entry_type: Union[Type[NBTENTRY], Type[BBTENTRY]], page_offset: int) -> dict:
+    def get_page_leaf_entries(self, entry_type: Union[Type[NBTENTRY], Type[BBTENTRY]], page_offset: int) -> dict[int, NBTENTRY | BBTENTRY]:
         """ entry type is NBTENTRY or BBTENTRY"""
 
-        # dict[int, NBTENTRY | BBTENTRY]
-        leaf_entries: dict = {}
+        leaf_entries: dict[int, NBTENTRY | BBTENTRY] = {}
         page: Page = self.fetch_page(page_offset)
         for entry in page.rgEntries:
 
@@ -621,10 +619,10 @@ class HID:
     is_hid: bool
     is_nid: bool
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
         # hidIndex cannot be zero, first 5 bits must be zero (hidType)
-        hidIndex, hidBlockIndex = struct.unpack('HH', value_bytes)
+        hidIndex, hidBlockIndex = struct.unpack('HH', payload)
         self.hidBlockIndex = int(hidBlockIndex)
         self.hidType = int(hidIndex) & 0x1F
         self.hidIndex = (int(hidIndex) >> 5) & 0x7FF
@@ -635,15 +633,15 @@ class HID:
 class HNPAGEMAP:
     cAlloc: int
     cFree: int
-    rgibAlloc: list  # list[int]
+    rgibAlloc: list[int]
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
-        self.cAlloc, self.cFree = struct.unpack('HH', value_bytes[:4])
+        self.cAlloc, self.cFree = struct.unpack('HH', payload[:4])
         self.rgibAlloc = []
         for i in range(self.cAlloc + 1):  # cAlloc+1 is next free
             self.rgibAlloc.append(struct.unpack(
-                'H', value_bytes[4 + i * 2:4 + (i + 1) * 2])[0])
+                'H', payload[4 + i * 2:4 + (i + 1) * 2])[0])
 
 
 class HN:
@@ -654,17 +652,16 @@ class HN:
     bTypePC: int = 0xBC
 
     nbt_entry: NBTENTRY
-    data_sections: list  # list[bytes]
+    data_sections: list[bytes]
     ltp: 'LTP'
-    hnpagemaps: list  # list[HNPAGEMAP]
-    subnodes: Optional[dict] = None  # Optional[dict[int, SLENTRY]]
+    hnpagemaps: list[HNPAGEMAP]
+    subnodes: Optional[dict[int, SLENTRY]] = None
     bSig: int
     bClientSig: int
     hidUserRoot: HID
     rgbFillLevel: int
 
-    # list[bytes]
-    def __init__(self, nbt_entry: NBTENTRY, ltp: 'LTP', data_sections: list) -> None:
+    def __init__(self, nbt_entry: NBTENTRY, ltp: 'LTP', data_sections: list[bytes]) -> None:
         """data_sections = list of data sections from blocks"""
 
         self.nbt_entry = nbt_entry
@@ -740,7 +737,7 @@ class BTH:
     cbEnt: int
     bIdxLevels: int
     hidRoot: HID
-    bth_data_list: list  # list[BTHData]
+    bth_data_list: list[BTHData]
 
     def __init__(self, hn: HN, bth_hid: HID) -> None:
         """ hn = HN heapnode, bth_hid is hid of BTH header"""
@@ -754,21 +751,18 @@ class BTH:
         if self.bType != HN.bTypeBTH:
             raise PANHuntException('Invalid BTH Type %s' % self.bType)
         self.bth_data_list = []
-        bth_working_stack: list = []  # list[BTHIntermediate]
+        bth_working_stack: list[BTHIntermediate] = []
 
         if self.hidRoot.hidIndex != 0:
-            value_bytes: bytes = hn.get_hid_data(self.hidRoot)
+            payload: bytes = hn.get_hid_data(self.hidRoot)
 
-            # list[BTHData | BTHIntermediate]
-            bth_record_list: list = self.get_bth_records(
-                value_bytes, self.bIdxLevels)
+            bth_record_list: list[BTHData | BTHIntermediate] = self.get_bth_records(
+                payload, self.bIdxLevels)
 
-            # list[BTHData]
-            bth_data_list: list = [
+            bth_data_list: list[BTHData] = [
                 bthdata for bthdata in bth_record_list if isinstance(bthdata, BTHData)]
 
-            # list[BTHIntermediate]
-            bth_intermediate_list: list = [
+            bth_intermediate_list: list[BTHIntermediate] = [
                 bthim for bthim in bth_record_list if isinstance(bthim, BTHIntermediate)]
 
             if self.bIdxLevels == 0:  # no intermediate levels
@@ -777,34 +771,33 @@ class BTH:
                 bth_working_stack = bth_intermediate_list
                 while bth_working_stack:
                     bth_intermediate: BTHIntermediate = bth_working_stack.pop()
-                    value_bytes = hn.get_hid_data(
+                    payload = hn.get_hid_data(
                         bth_intermediate.hidNextLevel)
                     bth_record_list = self.get_bth_records(
-                        value_bytes, bth_intermediate.bIdxLevel - 1)
+                        payload, bth_intermediate.bIdxLevel - 1)
                     if bth_intermediate.bIdxLevel - 1 == 0:  # leafs
                         self.bth_data_list.extend(bth_data_list)
                     else:
                         bth_working_stack.extend(bth_intermediate_list)
 
-    # list[BTHData | BTHIntermediate]
-    def get_bth_records(self, value_bytes: bytes, bIdxLevel: int) -> list:
+    def get_bth_records(self, payload: bytes, bIdxLevel: int) -> list[BTHData | BTHIntermediate]:
 
-        bth_record_list: list = []  # list[BTHData | BTHIntermediate]
+        bth_record_list: list[BTHData | BTHIntermediate] = []
 
         if bIdxLevel == 0:  # leaf
             record_size: int = self.cbKey + self.cbEnt
-            records: int = len(value_bytes) // record_size
+            records: int = len(payload) // record_size
             for i in range(records):
                 key, data = struct.unpack('%ss%ss' % (
-                    self.cbKey, self.cbEnt), value_bytes[i * record_size:(i + 1) * record_size])
+                    self.cbKey, self.cbEnt), payload[i * record_size:(i + 1) * record_size])
 
                 bth_record_list.append(BTHData(key, data))
         else:  # intermediate
             record_size = self.cbKey + 4
-            records = len(value_bytes) // record_size
+            records = len(payload) // record_size
             for i in range(records):
                 key, hidNextLevel = struct.unpack(
-                    '%ss4s' % self.cbKey, value_bytes[i * record_size:(i + 1) * record_size])
+                    '%ss4s' % self.cbKey, payload[i * record_size:(i + 1) * record_size])
                 hidNextLevel = HID(hidNextLevel)
                 bth_record_list.append(BTHIntermediate(
                     key, hidNextLevel, bIdxLevel))
@@ -851,8 +844,7 @@ class PCBTHData:
                     raise PANHuntException(
                         'Invalid NID subnode reference %s' % self.subnode_nid)
 
-                # list[bytes]
-                data_list: list = hn.ltp.nbd.fetch_all_block_data(
+                data_list: list[bytes] = hn.ltp.nbd.fetch_all_block_data(
                     subnode_nid_bid)
                 self.value = ptype.value(b''.join(data_list))
 
@@ -872,48 +864,48 @@ class PstPTypeWrapper:
 
         self.ptype, self.byte_count, self.is_variable, self.is_multi = ptype, byte_count, is_variable, is_multi
 
-    def value(self, value_bytes: bytes) -> _ValueType:
-        """value_bytes is normally a string of bytes, but if multi and variable, bytes is a list of bytes"""
+    def value(self, payload: bytes) -> _ValueType:
+        """payload is normally a string of bytes, but if multi and variable, bytes is a list of bytes"""
 
         ul_count: int
-        rgul_data_offsets: list  # list[int]
-        data_list: list  # list[bytes]
+        rgul_data_offsets: list[int]
+        data_list: list[bytes]
 
         if self.ptype == PTypeEnum.PtypInteger16:
-            return panutils.unpack_integer('h', value_bytes)
+            return panutils.unpack_integer('h', payload)
         if self.ptype == PTypeEnum.PtypInteger32:
-            return panutils.unpack_integer('i', value_bytes)
+            return panutils.unpack_integer('i', payload)
         if self.ptype == PTypeEnum.PtypFloating32:
-            return panutils.unpack_float('f', value_bytes)
+            return panutils.unpack_float('f', payload)
         if self.ptype == PTypeEnum.PtypFloating64:
-            return panutils.unpack_float('d', value_bytes)
+            return panutils.unpack_float('d', payload)
         if self.ptype == PTypeEnum.PtypCurrency:
             raise NotImplementedError('PtypCurrency')
         if self.ptype == PTypeEnum.PtypFloatingTime:
-            return self.get_floating_time(value_bytes)
+            return self.get_floating_time(payload)
         if self.ptype == PTypeEnum.PtypErrorCode:
-            return panutils.unpack_integer('I', value_bytes)
+            return panutils.unpack_integer('I', payload)
         if self.ptype == PTypeEnum.PtypBoolean:
-            return panutils.unpack_integer('B', value_bytes) != 0
+            return panutils.unpack_integer('B', payload) != 0
         if self.ptype == PTypeEnum.PtypInteger64:
-            return panutils.unpack_integer('q', value_bytes)
+            return panutils.unpack_integer('q', payload)
         if self.ptype == PTypeEnum.PtypString:
             # Preventing the error:
             # UnicodeDecodeError: 'utf16' codec can't decode bytes in position 0 - 1:
             # illegal UTF - 16 surrogate
             try:
-                return value_bytes.decode('utf-16-le')  # unicode
+                return payload.decode('utf-16-le')  # unicode
             except UnicodeDecodeError:
                 PANHuntException(
                     'String property not correctly utf-16-le encoded, ignoring errors')
                 # unicode
-                return value_bytes.decode('utf-16-le', errors='ignore')
+                return payload.decode('utf-16-le', errors='ignore')
         if self.ptype == PTypeEnum.PtypString8:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypTime:
-            return self.get_time(value_bytes)
+            return self.get_time(payload)
         if self.ptype == PTypeEnum.PtypGuid:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypServerId:
             raise NotImplementedError('PtypServerId')
         if self.ptype == PTypeEnum.PtypRestriction:
@@ -921,82 +913,78 @@ class PstPTypeWrapper:
         if self.ptype == PTypeEnum.PtypRuleAction:
             raise NotImplementedError('PtypRuleAction')
         if self.ptype == PTypeEnum.PtypBinary:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypMultipleInteger16:
-            return self.unpack_list_int(value_bytes, 16)
+            return self.unpack_list_int(payload, 16)
         if self.ptype == PTypeEnum.PtypMultipleInteger32:
-            return self.unpack_list_int(value_bytes, 32)
+            return self.unpack_list_int(payload, 32)
         if self.ptype == PTypeEnum.PtypMultipleFloating32:
-            return self.unpack_list_float(value_bytes, 32)
+            return self.unpack_list_float(payload, 32)
         if self.ptype == PTypeEnum.PtypMultipleFloating64:
-            return self.unpack_list_float(value_bytes, 64)
+            return self.unpack_list_float(payload, 64)
         if self.ptype == PTypeEnum.PtypMultipleCurrency:
             raise NotImplementedError('PtypMultipleCurrency')
         if self.ptype == PTypeEnum.PtypMultipleFloatingTime:
-            count: int = len(value_bytes) // 8
-            return [self.get_floating_time(value_bytes[i * 8:(i + 1) * 8]) for i in range(count)]
+            count: int = len(payload) // 8
+            return [self.get_floating_time(payload[i * 8:(i + 1) * 8]) for i in range(count)]
         if self.ptype == PTypeEnum.PtypMultipleInteger64:
-            self.unpack_list_int(value_bytes=value_bytes, bit_size=64)
+            self.unpack_list_int(payload=payload, bit_size=64)
         if self.ptype == PTypeEnum.PtypMultipleString:
             ul_count, rgul_data_offsets = self.get_multi_value_offsets(
-                value_bytes)
-            s: list = []  # list[str]
+                payload)
+            s: list[str] = []
 
             for i in range(ul_count):
                 s.append(
-                    value_bytes[rgul_data_offsets[i]:rgul_data_offsets[i + 1]].decode('utf-16-le'))
+                    payload[rgul_data_offsets[i]:rgul_data_offsets[i + 1]].decode('utf-16-le'))
             return s
         if self.ptype == PTypeEnum.PtypMultipleString8:
             ul_count, rgul_data_offsets = self.get_multi_value_offsets(
-                value_bytes)
+                payload)
             data_list = []
             for i in range(ul_count):
                 data_list.append(
-                    value_bytes[rgul_data_offsets[i]:rgul_data_offsets[i + 1]])
+                    payload[rgul_data_offsets[i]:rgul_data_offsets[i + 1]])
             return data_list
         if self.ptype == PTypeEnum.PtypMultipleTime:
-            count = len(value_bytes) // 8
-            return [self.get_time(value_bytes[i * 8:(i + 1) * 8]) for i in range(count)]
+            count = len(payload) // 8
+            return [self.get_time(payload[i * 8:(i + 1) * 8]) for i in range(count)]
         if self.ptype == PTypeEnum.PtypMultipleGuid:
-            count = len(value_bytes) // 16
-            return [value_bytes[i * 16:(i + 1) * 16] for i in range(count)]
+            count = len(payload) // 16
+            return [payload[i * 16:(i + 1) * 16] for i in range(count)]
         if self.ptype == PTypeEnum.PtypMultipleBinary:
             ul_count, rgul_data_offsets = self.get_multi_value_offsets(
-                value_bytes)
+                payload)
             data_list = []
             for i in range(ul_count):
                 data_list.append(
-                    value_bytes[rgul_data_offsets[i]:rgul_data_offsets[i + 1]])
+                    payload[rgul_data_offsets[i]:rgul_data_offsets[i + 1]])
             return data_list
         if self.ptype == PTypeEnum.PtypUnspecified:
-            return value_bytes
+            return payload
         if self.ptype == PTypeEnum.PtypNull:
             return None
         if self.ptype == PTypeEnum.PtypObject:
-            return value_bytes[:4]
+            return payload[:4]
         return None
-        # raise PSTException(
-        #     f"Invalid PTypeEnum for type {self.ptype} and value {value_bytes!r}")
 
-    # list[int]
-    def unpack_list_int(self, value_bytes: bytes, bit_size: int) -> list:
+    def unpack_list_int(self, payload: bytes, bit_size: int) -> list[int]:
         '''bit_size: Literal[16, 32, 64]'''
 
-        format_dict: dict = {16: 'h', 32: 'i', 64: 'q'}  # dict[int, str]
+        format_dict: dict[int, str] = {16: 'h', 32: 'i', 64: 'q'}
         buffer_size = (bit_size // 8)
-        count: int = len(value_bytes) // buffer_size
+        count: int = len(payload) // buffer_size
         return [panutils.unpack_integer(
-            format_dict[bit_size], value_bytes[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
+            format_dict[bit_size], payload[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
 
-    # list[float]
-    def unpack_list_float(self, value_bytes: bytes, bit_size: int) -> list:
+    def unpack_list_float(self, payload: bytes, bit_size: int) -> list[float]:
         '''bit_size: Literal[32, 64]'''
 
-        format_dict: dict = {32: 'f', 64: 'd'}  # dict[int, str]
+        format_dict: dict[int, str] = {32: 'f', 64: 'd'}
         buffer_size = (bit_size // 8)
-        count: int = len(value_bytes) // buffer_size
+        count: int = len(payload) // buffer_size
         return [panutils.unpack_float(
-            format_dict[bit_size], value_bytes[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
+            format_dict[bit_size], payload[i * buffer_size:(i + 1) * buffer_size]) for i in range(count)]
 
     def get_floating_time(self, time_bytes: bytes) -> datetime:
 
@@ -1006,16 +994,14 @@ class PstPTypeWrapper:
 
         return datetime(year=1601, month=1, day=1) + timedelta(microseconds=panutils.unpack_integer('q', time_bytes) / 10.0)
 
-    # tuple[int, list[int]]:
-    def get_multi_value_offsets(self, value_bytes: bytes) -> tuple:
+    def get_multi_value_offsets(self, payload: bytes) -> tuple[int, list[int]]:
 
-        ul_count: int = panutils.unpack_integer('I', value_bytes[:4])
+        ul_count: int = panutils.unpack_integer('I', payload[:4])
 
-        # list[int]
-        rgul_data_offsets: list = [panutils.unpack_integer(
-            'I', value_bytes[(i + 1) * 4:(i + 2) * 4]) for i in range(ul_count)]
+        rgul_data_offsets: list[int] = [panutils.unpack_integer(
+            'I', payload[(i + 1) * 4:(i + 2) * 4]) for i in range(ul_count)]
 
-        rgul_data_offsets.append(len(value_bytes))
+        rgul_data_offsets.append(len(payload))
         return ul_count, rgul_data_offsets
 
 
@@ -1023,7 +1009,7 @@ class PC:  # Property Context
 
     hn: HN
     bth: BTH
-    properties: dict  # dict[int, PCBTHData]
+    properties: dict[int, PCBTHData]
 
     def __init__(self, hn: HN) -> None:
 
@@ -1069,11 +1055,11 @@ class TCOLDESC:
     cbData: int
     iBit: int
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
         # self.tag is 4 byte (self.wPropId, self.wPropType): where is documentation MS?
         self.wPropType, self.wPropId, self.ibData, self.cbData, self.iBit = struct.unpack(
-            'HHHBB', value_bytes)
+            'HHHBB', payload)
 
     def __repr__(self) -> str:
 
@@ -1108,11 +1094,11 @@ class TC:  # Table Context
     cCols: int
     hnidRows: Union[HID, NID]
     hidRowIndex: HID
-    rgib: tuple  # tuple[int, int, int, int]
-    rgTCOLDESC: list  # list[TCOLDESC]
+    rgib: tuple[int, int, int, int]
+    rgTCOLDESC: list[TCOLDESC]
     hidIndex: bytes
-    RowIndex: dict  # dict[int, TCROWID]
-    RowMatrix: dict  # dict[int, dict[int, _ValueType]]
+    RowIndex: dict[int, TCROWID]
+    RowMatrix: dict[int, dict[int, _ValueType]]
 
     def __init__(self, hn: HN) -> None:
 
@@ -1158,7 +1144,7 @@ class TC:  # Table Context
     def setup_row_matrix(self) -> None:
 
         self.RowMatrix = {}
-        row_matrix_data: list  # list[bytes]
+        row_matrix_data: list[bytes]
 
         if self.RowIndex:
             if self.hn.ltp.nbd.header.is_ansi:
@@ -1197,7 +1183,7 @@ class TC:  # Table Context
                 dwRowID: int = panutils.unpack_integer('I', row_bytes[:4])
                 rgbCEB: bytes = row_bytes[self.rgib[TC.TCI_1b]:]
 
-                rowvals: dict = {}  # dict[int, _ValueType]
+                rowvals: dict[int, _ValueType] = {}
                 for tcoldesc in self.rgTCOLDESC:
                     is_fCEB: bool = (
                         (rgbCEB[tcoldesc.iBit // 8] & (1 << (7 - (tcoldesc.iBit % 8)))) != 0)
@@ -1241,8 +1227,7 @@ class TC:  # Table Context
             raise PANHuntException(
                 'Row Matrix Value HNID Subnode invalid: %s' % subnode_nid)
 
-        # list[bytes]
-        data_sectors: list = self.hn.ltp.nbd.fetch_all_block_data(
+        data_sectors: list[bytes] = self.hn.ltp.nbd.fetch_all_block_data(
             subnode_nid_bid)
         return ptype.value(b''.join(data_sectors))
 
@@ -1254,8 +1239,7 @@ class TC:  # Table Context
 
         row_id: int = self.get_row_ID(row_index)
 
-        # dict[int, _ValueType]
-        row_values: dict = self.RowMatrix[row_id]
+        row_values: dict[int, _ValueType] = self.RowMatrix[row_id]
         if prop_id.value in row_values.keys():
             return row_values[prop_id.value]
         return None
@@ -1276,8 +1260,7 @@ class LTP:
     def __init__(self, nbd: NBD) -> None:
 
         self.nbd: NBD = nbd
-        # dict[PTypeEnum, PstPTypeWrapper]
-        self.ptypes: dict = {
+        self.ptypes: dict[PTypeEnum, PstPTypeWrapper] = {
             PTypeEnum.PtypInteger16: PstPTypeWrapper(PTypeEnum.PtypInteger16, 2, False, False),
             PTypeEnum.PtypInteger32: PstPTypeWrapper(PTypeEnum.PtypInteger32, 4, False, False),
             PTypeEnum.PtypFloating32: PstPTypeWrapper(PTypeEnum.PtypFloating32, 4, False, False),
@@ -1317,16 +1300,14 @@ class LTP:
 
         nbt_entry: NBTENTRY = self.nbd.nbt_entries[nid.nid]
 
-        # list[bytes]
-        block_data_list: list = self.nbd.fetch_all_block_data(
+        block_data_list: list[bytes] = self.nbd.fetch_all_block_data(
             nbt_entry.bidData)
         hn: HN = HN(nbt_entry, self, block_data_list)
         return PC(hn)
 
     def get_pc_by_slentry(self, slentry: SLENTRY) -> PC:
 
-        # list[bytes]
-        block_data_list: list = self.nbd.fetch_all_block_data(
+        block_data_list: list[bytes] = self.nbd.fetch_all_block_data(
             slentry.bidData)
         # TODO: Solve HN with SLENTRY parameter
         hn: HN = HN(slentry, self, block_data_list)
@@ -1337,16 +1318,14 @@ class LTP:
 
         nbt_entry: NBTENTRY = self.nbd.nbt_entries[nid.nid]
 
-        # list[bytes]
-        block_data_list: list = self.nbd.fetch_all_block_data(
+        block_data_list: list[bytes] = self.nbd.fetch_all_block_data(
             nbt_entry.bidData)
         hn: HN = HN(nbt_entry, self, block_data_list)
         return TC(hn)
 
     def get_tc_by_slentry(self, slentry: SLENTRY) -> TC:
 
-        # list[bytes]
-        block_data_list: list = self.nbd.fetch_all_block_data(
+        block_data_list: list[bytes] = self.nbd.fetch_all_block_data(
             slentry.bidData)
         # TODO: Solve HN with SLENTRY parameter
         hn: HN = HN(slentry, self, block_data_list)
@@ -1376,15 +1355,15 @@ class EntryID:
     uid: bytes
     nid: NID
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
-        if len(value_bytes) > 24:
-            # raise ValueError("Invalid data")
+        if len(payload) > 24:
+            # Invalid data
             return
 
         nid_bytes: bytes
         self.rgbFlags, self.uid, nid_bytes = struct.unpack(
-            '4s16s4s', value_bytes)
+            '4s16s4s', payload)
         self.nid = NID(nid_bytes)
 
     def __repr__(self) -> str:
@@ -1441,8 +1420,8 @@ class Folder:
     tc_contents: Optional[TC]
     tc_hierarchy: Optional[TC]
     tc_fai: Optional[TC]
-    subfolders: list  # list[SubFolder]
-    submessages: list  # list[SubMessage]
+    subfolders: list[SubFolder]
+    submessages: list[SubMessage]
 
     def __init__(self, nid: NID, ltp: LTP, parent_path='', messaging: Optional['Messaging'] = None) -> None:
 
@@ -1452,7 +1431,7 @@ class Folder:
                     'Invalid Folder NID Type: %s' % nid.nidType)
             self.pc = ltp.get_pc_by_nid(nid)
 
-            dn = self.pc.get_raw_data(
+            dn: Optional[PCBTHData] = self.pc.get_raw_data(
                 PropIdEnum.PidTagDisplayName.value)
             if dn:
                 self.DisplayName = panutils.as_str(dn.value)
@@ -1463,7 +1442,7 @@ class Folder:
                 self.EntryId = 4 * b'\x00' + \
                     messaging.store_record_key + struct.pack('I', nid.nid)
 
-            cc = self.pc.get_raw_data(
+            cc: Optional[PCBTHData] = self.pc.get_raw_data(
                 PropIdEnum.PidTagContentCount.value)
             if cc:
                 self.ContentCount = panutils.as_int(cc.value)
@@ -1474,7 +1453,7 @@ class Folder:
                 ccv = cc.value
                 self.ContainerClass = panutils.as_str(ccv)
 
-            hsf = self.pc.get_raw_data(
+            hsf: Optional[PCBTHData] = self.pc.get_raw_data(
                 PropIdEnum.PidTagSubfolders.value)
             if hsf:
                 self.HasSubfolders = panutils.as_int(hsf.value) == 1
@@ -1500,8 +1479,8 @@ class Folder:
         except PANHuntException as e:
             logging.error(e)
 
-    def __get_submessages(self, ltp: LTP) -> list:  # list[SubMessage]
-        submessages: list = []  # list[SubMessage]
+    def __get_submessages(self, ltp: LTP) -> list[SubMessage]:
+        submessages: list[SubMessage] = []
 
         if self.tc_contents:
             for RowIndex in range(len(self.tc_contents.RowIndex)):
@@ -1592,8 +1571,8 @@ class Message:
     EntryId: bytes
     tc_attachments: Optional[TC]
     tc_recipients: Optional[TC]
-    subrecipients: list  # list[SubRecipient]
-    subattachments: list  # list[SubAttachment]
+    subrecipients: list[SubRecipient]
+    subattachments: list[SubAttachment]
     Body: Optional[str] = None
     Subject: Optional[str] = None
     Read: bool
@@ -1613,8 +1592,7 @@ class Message:
         if parent_message and parent_message.pc.hn.subnodes and nbd:
             subnode: SLENTRY = parent_message.pc.hn.subnodes[nid.nid]
 
-            # list[bytes]
-            block_data_list: list = nbd.fetch_all_block_data(
+            block_data_list: list[bytes] = nbd.fetch_all_block_data(
                 subnode.bidData)
             # TODO: Solve HN with SLENTRY parameter
             hn: HN = HN(subnode, ltp, block_data_list)
@@ -1630,19 +1608,19 @@ class Message:
             self.EntryId = 4 * b'\x00' + \
                 messaging.store_record_key + struct.pack('I', nid.nid)
 
-        mc = self.pc.get_raw_data(
+        mc: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagMessageClassW.value)
         if mc:
             self.MessageClass: str = panutils.as_str(mc.value)
 
-        mfs = self.pc.get_raw_data(
+        mfs: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagMessageFlags.value)
         if mfs:
             self.MessageFlags: int = panutils.as_int(mfs.value)
         self.HasAttachments: bool = (
             self.MessageFlags & Message.mfHasAttach == Message.mfHasAttach)
 
-        msz = self.pc.get_raw_data(
+        msz: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagMessageSize.value)
         if msz:
             self.MessageSize: int = panutils.as_int(msz.value)
@@ -1651,31 +1629,33 @@ class Message:
 
         # If the message is a draft, then
         # values below are null
-        ms = self.pc.get_raw_data(
+        ms: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagMessageStatus.value)
         if ms:
             self.MessageStatus = panutils.as_int(
                 ms.value)
 
-        tmh = self.pc.get_raw_data(
+        tmh: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagTransportMessageHeaders.value)
         if tmh:
             self.TransportMessageHeaders = panutils.as_str(tmh.value)
 
-        mdt = self.pc.get_raw_data(
+        mdt: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagMessageDeliveryTime.value)
         if mdt:
             self.MessageDeliveryTime: datetime = panutils.as_datetime(
                 mdt.value)
 
         # Body can be null in an email
-        b = self.pc.get_raw_data(PropIdEnum.PidTagBody.value)
+        b: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagBody.value)
         if b:
             self.Body = panutils.as_str(
                 b.value)
 
         # Optional property
-        s = self.pc.get_raw_data(PropIdEnum.PidTagSubjectW.value)
+        s: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagSubjectW.value)
         if s:
             self.Subject = ltp.strip_SubjectPrefix(
                 panutils.as_str(s.value))
@@ -1685,28 +1665,30 @@ class Message:
         # if x:
         #     self.XOriginatingIP = panutils.as_str(x.value)  # x-originating-ip
 
-        dto = self.pc.get_raw_data(PropIdEnum.PidTagDisplayToW.value)
+        dto: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagDisplayToW.value)
         if dto:
             self.DisplayTo = panutils.as_str(dto.value)
 
         # Null if imported
-        ssa = self.pc.get_raw_data(
+        ssa: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagSenderSmtpAddress.value)
         if ssa:
             self.SenderSmtpAddress = panutils.as_str(ssa.value)
 
         # Null if meeting invitation
-        srn = self.pc.get_raw_data(
+        srn: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagSentRepresentingNameW.value)
         if srn:
             self.SentRepresentingName = panutils.as_str(srn.value)
 
-        sn = self.pc.get_raw_data(
+        sn: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagSenderName.value)
         if sn:
             self.SenderName = panutils.as_str(sn.value)
 
-        cst = self.pc.get_raw_data(PropIdEnum.PidTagClientSubmitTime.value)
+        cst: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagClientSubmitTime.value)
         if cst:
             self.ClientSubmitTime = panutils.as_datetime(cst.value)
 
@@ -1723,8 +1705,8 @@ class Message:
 
         self.subrecipients = self.__read_subrecipients()
 
-    def __read_subrecipients(self) -> list:  # list[SubRecipient]
-        subrecipients: list = []  # list[SubRecipient]
+    def __read_subrecipients(self) -> list[SubRecipient]:
+        subrecipients: list[SubRecipient] = []
 
         if self.tc_recipients:
             for i in range(len(self.tc_recipients.RowIndex)):
@@ -1749,8 +1731,8 @@ class Message:
                 eid: _ValueType = self.tc_recipients.get_context_value(
                     i, PropIdEnum.PidTagEntryID)
                 if eid:
-                    value_bytes: bytes = panutils.as_binary(eid)
-                    entryId = EntryID(value_bytes)
+                    payload: bytes = panutils.as_binary(eid)
+                    entryId = EntryID(payload)
 
                 display_type: Optional[int] = None
                 dst: _ValueType = self.tc_recipients.get_context_value(
@@ -1763,8 +1745,8 @@ class Message:
 
         return subrecipients
 
-    def __read_attachments(self) -> list:  # list[SubAttachment]
-        subattachments: list = []  # list[SubAttachment]
+    def __read_attachments(self) -> list[SubAttachment]:
+        subattachments: list[SubAttachment] = []
 
         if self.tc_attachments:
             for i in range(len(self.tc_attachments.RowIndex)):
@@ -1830,24 +1812,27 @@ class Attachment:
         self.slentry = slentry
         self.pc = self.ltp.get_pc_by_slentry(slentry)
 
-        dn = self.pc.get_raw_data(PropIdEnum.PidTagDisplayName.value)
+        dn: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagDisplayName.value)
         if dn:
             self.DisplayName = panutils.as_str(dn.value)
 
-        amt = self.pc.get_raw_data(PropIdEnum.PidTagAttachMethod.value)
-        if amt:
-            self.AttachMethod = panutils.as_int(amt.value)
+        am: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagAttachMethod.value)
+        if am:
+            self.AttachMethod = panutils.as_int(am.value)
 
-        asz = self.pc.get_raw_data(PropIdEnum.PidTagAttachmentSize.value)
+        asz: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagAttachmentSize.value)
         if asz:
             self.AttachmentSize = panutils.as_int(
                 asz.value)
-        afn = self.pc.get_raw_data(
+        afn: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagAttachFilename.value)
         if afn:
             self.AttachFilename = panutils.as_str(afn.value)  # 8.3 short name
 
-        alfn = self.pc.get_raw_data(
+        alfn: Optional[PCBTHData] = self.pc.get_raw_data(
             PropIdEnum.PidTagAttachLongFilename.value)
         if alfn:
             self.AttachLongFilename = panutils.as_str(alfn.value)
@@ -1862,21 +1847,23 @@ class Attachment:
             self.Filename = '[NoFilename_Method%s]' % self.AttachMethod
 
         if self.AttachMethod == Message.afByValue:
-            atm = self.pc.get_raw_data(
+            atm: Optional[PCBTHData] = self.pc.get_raw_data(
                 PropIdEnum.PidTagAttachDataBinary.value)
             if atm:
                 self.BinaryData = panutils.as_binary(atm.value)
         else:
-            ado = self.pc.get_raw_data(
+            ado: Optional[PCBTHData] = self.pc.get_raw_data(
                 PropIdEnum.PidTagAttachDataObject.value)
             if ado:
                 self.BinaryData = panutils.as_binary(ado.value)
 
-        amt = self.pc.get_raw_data(PropIdEnum.PidTagAttachMimeTag.value)
+        amt: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagAttachMimeTag.value)
         if amt:
             self.AttachMimeTag = panutils.as_str(amt.value)
 
-        ae = self.pc.get_raw_data(PropIdEnum.PidTagAttachExtension.value)
+        ae: Optional[PCBTHData] = self.pc.get_raw_data(
+            PropIdEnum.PidTagAttachExtension.value)
         if ae:
             self.AttachExtension = panutils.as_str(ae.value)
 
@@ -1895,10 +1882,10 @@ class NAMEID:
     N: int
     NPID: int
 
-    def __init__(self, value_bytes: bytes) -> None:
+    def __init__(self, payload: bytes) -> None:
 
         property_id, guid, prop_idx = struct.unpack(
-            'IHH', value_bytes)
+            'IHH', payload)
 
         if not isinstance(property_id, int):
             raise TypeError(property_id)
@@ -1918,7 +1905,7 @@ class Messaging:
     """Messaging Layer"""
 
     PasswordCRC32Hash: Optional[int]
-    nameid_entries: list  # list[NAMEID]
+    nameid_entries: list[NAMEID]
     ltp: LTP
     message_store: PC
     store_record_key: bytes
@@ -1939,25 +1926,25 @@ class Messaging:
 
         self.message_store = self.ltp.get_pc_by_nid(NID(NID.NID_MESSAGE_STORE))
 
-        srk = self.message_store.get_raw_data(
+        srk: Optional[PCBTHData] = self.message_store.get_raw_data(
             PropIdEnum.PidTagRecordKey.value)
         if srk:
             self.store_record_key = panutils.as_binary(srk.value)  # binary
 
         self.PasswordCRC32Hash = None
         if PropIdEnum.PidTagPstPassword.value in self.message_store.properties.keys():
-            passwd = self.message_store.get_raw_data(
+            passwd: Optional[PCBTHData] = self.message_store.get_raw_data(
                 PropIdEnum.PidTagPstPassword.value)
             if passwd:
                 self.PasswordCRC32Hash = panutils.unpack_integer('I', struct.pack(
                     'i', panutils.as_int(passwd.value)))
 
-        riv = self.message_store.get_raw_data(
+        riv: Optional[PCBTHData] = self.message_store.get_raw_data(
             PropIdEnum.PidTagIpmSubTreeEntryId.value)
         if riv and isinstance(riv.value, EntryID):
             self.root_entryid = riv.value
 
-        div = self.message_store.get_raw_data(
+        div: Optional[PCBTHData] = self.message_store.get_raw_data(
             PropIdEnum.PidTagIpmWastebasketEntryId.value)
         if div and isinstance(div.value, EntryID):
             self.deleted_items_entryid = div.value
@@ -1969,7 +1956,7 @@ class Messaging:
             NID(NID.NID_NAME_TO_ID_MAP))
 
         nameid_entrystream: Optional[bytes] = None
-        nameid_entry_obj = self.pc_name_to_id_map.get_raw_data(
+        nameid_entry_obj: Optional[PCBTHData] = self.pc_name_to_id_map.get_raw_data(
             PropIdEnum.PidTagNameidStreamEntry.value)
         if nameid_entry_obj:
             nameid_entrystream = panutils.as_binary(nameid_entry_obj.value)
@@ -1979,14 +1966,14 @@ class Messaging:
                                    for i in range(len(nameid_entrystream) // 8)]
 
             nameid_stringstream: Optional[bytes] = None
-            nameid_string_obj = self.pc_name_to_id_map.get_raw_data(
+            nameid_string_obj: Optional[PCBTHData] = self.pc_name_to_id_map.get_raw_data(
                 PropIdEnum.PidTagNameidStreamString.value)
             if nameid_string_obj:
                 nameid_stringstream = panutils.as_binary(
                     nameid_string_obj.value)
 
             nameid_guidstream: Optional[bytes] = None
-            nameid_guid_obj = self.pc_name_to_id_map.get_raw_data(
+            nameid_guid_obj: Optional[PCBTHData] = self.pc_name_to_id_map.get_raw_data(
                 PropIdEnum.PidTagNameidStreamGuid.value)
             if nameid_guid_obj:
                 nameid_guidstream = panutils.as_binary(
@@ -2443,14 +2430,14 @@ class Header:
 
 class Root:
 
-    def __init__(self, value_bytes: bytes, is_ansi: bool) -> None:
+    def __init__(self, payload: bytes, is_ansi: bool) -> None:
 
         if is_ansi:  # 40
             self.ibFileEof, self.ibAMapLast, self.cbAMapFree, self.cbPMapFree, BREFNBT, BREFBBT, self.fAMapValid = \
-                struct.unpack('IIII8s8sB', value_bytes[4:-3])
+                struct.unpack('IIII8s8sB', payload[4:-3])
         else:  # unicode #72
             self.ibFileEof, self.ibAMapLast, self.cbAMapFree, self.cbPMapFree, BREFNBT, BREFBBT, self.fAMapValid = \
-                struct.unpack('QQQQ16s16sB', value_bytes[4:-3])
+                struct.unpack('QQQQ16s16sB', payload[4:-3])
         self.BREFNBT: BREF = BREF(BREFNBT)
         self.BREFBBT: BREF = BREF(BREFBBT)
 
@@ -2497,8 +2484,7 @@ class PST:
         root_folder: Folder = self.messaging.get_folder(
             self.messaging.root_entryid, '')
 
-        # list[SubFolder]
-        subfolder_stack: list = root_folder.subfolders
+        subfolder_stack: list[SubFolder] = root_folder.subfolders
         yield root_folder
 
         # Deleted Items should also be in root folder, so don't need to get this one
@@ -2595,7 +2581,7 @@ class PST:
     def get_pst_status(self) -> str:
 
         display_name: str = ""
-        dn = self.messaging.message_store.get_raw_data(
+        dn: Optional[PCBTHData] = self.messaging.message_store.get_raw_data(
             PropIdEnum.PidTagDisplayName.value)
         if dn:
             display_name = panutils.as_str(dn.value)
@@ -2607,28 +2593,6 @@ class PST:
     def bruteforce(charset: str, maxlength: int) -> Generator[str, None, None]:
 
         return (''.join(candidate) for candidate in itertools.chain.from_iterable(itertools.product(charset, repeat=i) for i in range(1, maxlength + 1)))
-
-    @staticmethod
-    def crack_password(crc: int, dictionary_file: str = '') -> str:
-        """either does a dictionary attack against the PST password CRC hash, or does a brute force of up to 4 chars"""
-
-        if dictionary_file:
-            with open(dictionary_file, 'r', encoding='ascii') as f:
-                dic_entries: list = f.readlines()  # list[str]
-
-                for password_check in dic_entries:
-                    crc_check: int = CRC.ComputeCRC(
-                        password_check.strip().encode())
-                    if crc == crc_check:
-                        return password_check
-        else:  # brute force
-            charset: str = string.ascii_lowercase + string.digits
-            for password_length in range(1, 5):
-                for password_check in PST.bruteforce(charset, password_length):
-                    crc_check = CRC.ComputeCRC(password_check.encode())
-                    if crc == crc_check:
-                        return password_check
-        return str()
 
 
 ###################################################################################################################################
